@@ -92,17 +92,37 @@ def get_ticket_details(start_date=None, end_date=None, date_string=None):
 
 class AssistantManager:
     assistant_id = st.secrets.assistant_id
+    vector_store_id = st.secrets.vector_store_id
 
     def __init__(self):
         self.client = client
         self.model = "gpt-3.5-turbo"
         self.thread = None
         self.run = None
-
+        self.vector_store = self.client.beta.vector_stores.retrieve(
+            vector_store_id=AssistantManager.vector_store_id
+        )
         self.assistant = self.client.beta.assistants.retrieve(
             assistant_id=AssistantManager.assistant_id
         )
     
+    def upload_file(self, text):
+        def encode_texts(texts):
+            response = self.client.embeddings.create(
+                input=texts,
+                engine="text-embedding-3-small"
+            )
+            return response.data[0].embedding
+    
+        embedding = encode_texts(text)
+        new_document = {
+            "id": f"ticket_information_{time.time()}",
+            "vector": embedding,
+            "metadata": {
+                "text": text
+            }
+    }
+
     
     def create_thread(self):
         if not self.thread:
