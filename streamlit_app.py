@@ -96,6 +96,18 @@ class AssistantManager:
         response = requests.get('https://uat-archapi.niagarawater.com/api/tickets/getAllTicketDetails?usecase_id=["60cb784aafe4530011138ca9"]&start_date={}&end_date={}'.format(start_date, end_date), headers = headers)
         json = response.json()
         df = pd.DataFrame(json['response'])
+        df_plants = pd.read_excel('Plant Acronyms.xlsx')
+
+        location_dict = pd.Series(df_plants['Location Name'].values, index=df_plants['Abbreviation']).to_dict()
+        org_code_dict = pd.Series(df_plants['Organization Code'].values, index=df_plants['Abbreviation']).to_dict()
+
+        df['plant_acronym'] = df['ticket_id'].str[:3]
+
+        df['location_name'] = df['plant_acronym'].map(location_dict)
+        df['organization_code'] = df['plant_acronym'].map(org_code_dict)
+
+        df = df.drop(columns=['plant_acronym'])
+        
         try:
             df = df.drop('_id', axis=1)
             df = df.drop('lastest_Message', axis=1)
@@ -104,26 +116,7 @@ class AssistantManager:
         except:
             pass
         print(df)
-        file_name = f'{start_date}_to_{end_date}'
-        with open(f'{file_name}.json', 'w') as f:
-            f.write(df.to_json(orient='index'))       
-        self.upload_file(f'{file_name}.json')
-        os.remove(f'{file_name}.json')
         return df.to_json(orient='index')
-    
-    def upload_file(self, file):
-        try:
-            file_streams = [open(file, "rb")]
-
-            file_batch = client.beta.vector_stores.file_batches.upload_and_poll(
-                vector_store_id=AssistantManager.vector_store_id, files=file_streams
-            )
-            time.sleep(1)
-            print("UPLOADING FILE")
-            print(file_batch.status)
-            print(file_batch.file_counts)
-        except:
-            pass
 
     
     def create_thread(self):
@@ -151,9 +144,10 @@ class AssistantManager:
         if self.thread:
             messages = self.client.beta.threads.messages.list(thread_id=self.thread.id)
             summary = []
+            print("MESSSAGES________________________")
+            print(messages.data)
 
             last_message = messages.data[0]
-            role = last_message.role
             response = last_message.content[0].text.value
             summary.append(response)
 
@@ -174,7 +168,6 @@ class AssistantManager:
                 raise ValueError(f"Unknown function: {func_name}")
         
         print(tool_outputs)
-        self.upload_file(str(tool_outputs))
 
         self.client.beta.threads.runs.submit_tool_outputs(
             thread_id=self.thread.id, run_id=self.run.id, tool_outputs=tool_outputs
