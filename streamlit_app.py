@@ -7,8 +7,9 @@ import json
 import time
 from dateutil.relativedelta import relativedelta
 import re
-import os
+import pytz
 
+  
 st.title("ARCH Ticket Assistant")
 
 openai_api_key = st.secrets.openai_api_key
@@ -37,7 +38,7 @@ class AssistantManager:
                 date_string = "recent"
             today = datetime.today()
             if date_string == "past month":
-                start_date = today.replace(day=1)
+                start_date = today - timedelta(days=30)
                 end_date = today
             elif date_string == "last year":
                 start_date = today.replace(year=today.year - 1, month=1, day=1)
@@ -101,12 +102,29 @@ class AssistantManager:
         location_dict = pd.Series(df_plants['Location Name'].values, index=df_plants['Abbreviation']).to_dict()
         org_code_dict = pd.Series(df_plants['Organization Code'].values, index=df_plants['Abbreviation']).to_dict()
 
-        df['plant_acronym'] = df['ticket_id'].str[:3]
+        def calculate_duration(row):
+            ticket_creation_date = datetime.fromisoformat(row['ticket_creation_date'].replace('Z', '+00:00'))
+            ticket_creation_date = ticket_creation_date.astimezone(pytz.UTC) 
+            
+            if row['closedDate'] != 'Cannot be determined':
+                try:
+                    closed_date = datetime.fromisoformat(row['closedDate'].replace('Z', '+00:00'))
+                    closed_date = closed_date.astimezone(pytz.UTC)
+                    duration = closed_date - ticket_creation_date
+                except ValueError:
+                    duration = datetime.now(pytz.UTC) - ticket_creation_date 
+            else:
+                duration = datetime.now(pytz.UTC) - ticket_creation_date 
+            
+            days = duration.days
+            hours = duration.seconds // 3600
+            return f"{days} days {hours} hours"
 
+        df['plant_acronym'] = df['ticket_id'].str[:3]
         df['location_name'] = df['plant_acronym'].map(location_dict)
         df['organization_code'] = df['plant_acronym'].map(org_code_dict)
-
         df = df.drop(columns=['plant_acronym'])
+        df['duration'] = df.apply(calculate_duration, axis=1)
         
         try:
             df = df.drop('_id', axis=1)
@@ -123,7 +141,7 @@ class AssistantManager:
         if not self.thread:
             thread_obj = self.client.beta.threads.create()
             self.thread = thread_obj
-            print(f"THREAD ID: {self.thread.id}")
+            print(f"CREATED NEW THREAD: {self.thread.id}")
 
   
     def add_message_to_thread(self, role, content):
@@ -132,21 +150,17 @@ class AssistantManager:
                 thread_id=self.thread.id, role=role, content=content
             )
 
-    def run_assistant(self, instructions):
+    def run_assistant(self):
         if self.thread and self.assistant:
             self.run = self.client.beta.threads.runs.create(
                 thread_id=self.thread.id,
                 assistant_id=self.assistant.id,
-                instructions=instructions
             )
     
     def process_message(self):
         if self.thread:
             messages = self.client.beta.threads.messages.list(thread_id=self.thread.id)
             summary = []
-            print("MESSSAGES________________________")
-            print(messages.data)
-
             last_message = messages.data[0]
             response = last_message.content[0].text.value
             summary.append(response)
@@ -204,20 +218,24 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-manager = AssistantManager()
-manager.create_thread()
+if "assistant_manager" not in st.session_state:
+    st.session_state.assistant_manager = AssistantManager()
+    st.session_state.assistant_manager.create_thread()
+
+manager = st.session_state.assistant_manager
 
 if prompt := st.chat_input("Message ARCH API Assistant"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     manager.add_message_to_thread(role="user", content=prompt)
     with st.chat_message("user"):
         st.markdown(prompt)
-    manager.run_assistant(instructions="Answer the question about maintenance tickets. Use ONLY the ticket information provided by the get_ticket_details function. Ask for clarification if needed. If you don't know the answer or don't understand the question, say you don't know and redirect the question to the ADR Team. DO NOT ANSWER WITH MADE UP TICKET INFORMATION NOT FOUND IN THE GIVEN FUNCTION.")
+    manager.run_assistant()
     response = manager.wait_for_completion()
     print(response)
 
     with st.chat_message("assistant"):
         st.write(response)
+
     st.session_state.messages.append({"role": "assistant", "content": response})
 
 uploaded_file = st.file_uploader("Add an attachment", type=["pdf", "jpg", "png", "docx"])
