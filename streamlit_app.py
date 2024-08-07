@@ -22,7 +22,7 @@ class AssistantManager:
 
     def __init__(self):
         self.client = client
-        self.model = "gpt-3.5-turbo"
+        self.model = "gpt-4o"
         self.thread = None
         self.run = None
         self.vector_store = self.client.beta.vector_stores.retrieve(
